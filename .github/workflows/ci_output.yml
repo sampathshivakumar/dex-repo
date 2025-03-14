@@ -1,0 +1,290 @@
+name: CI-Manual
+
+on:
+  workflow_dispatch:
+    outputs:
+      container-image-name:
+        description: Container image name
+        value: ${{ jobs.container-images.outputs.name }}
+      container-image-digest:
+        description: Container image digest
+        value: ${{ jobs.container-images.outputs.digest }}
+      container-image-ref:
+        description: Container image ref
+        value: ${{ jobs.container-images.outputs.ref }}
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:10.8
+        env:
+          TZ: UTC
+        ports:
+          - 5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+      postgres-ent:
+        image: postgres:10.8
+        env:
+          TZ: UTC
+        ports:
+          - 5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: dex
+        ports:
+          - 3306
+        options: --health-cmd "mysql -proot -e \"show databases;\"" --health-interval 10s --health-timeout 5s --health-retries 5
+
+      mysql-ent:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: dex
+        ports:
+          - 3306
+        options: --health-cmd "mysql -proot -e \"show databases;\"" --health-interval 10s --health-timeout 5s --health-retries 5
+
+      etcd:
+        image: gcr.io/etcd-development/etcd:v3.5.0
+        ports:
+          - 2379
+        env:
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
+        options: --health-cmd "ETCDCTL_API=3 etcdctl --endpoints http://localhost:2379 endpoint health" --health-interval 10s --health-timeout 5s --health-retries 5
+
+      keystone:
+        image: openio/openstack-keystone:rocky
+        ports:
+          - 5000
+          - 35357
+        options: --health-cmd "curl --fail http://localhost:5000/v3" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: "1.24"
+
+      - name: Download tool dependencies
+        run: make deps
+
+      - name: Verify
+        run: make verify
+
+      - name: Start services
+        run: docker compose -f docker-compose.test.yaml up -d
+
+      - name: Create kind cluster
+        uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
+        with:
+          version: "v0.17.0"
+          node_image: "kindest/node:v1.25.3@sha256:cd248d1438192f7814fbca8fede13cfe5b9918746dfa12583976158a834fd5c5"
+
+      - name: Test
+        run: make testall
+        env:
+          DEX_MYSQL_DATABASE: dex
+          DEX_MYSQL_USER: root
+          DEX_MYSQL_PASSWORD: root
+          DEX_MYSQL_HOST: 127.0.0.1
+          DEX_MYSQL_PORT: ${{ job.services.mysql.ports[3306] }}
+
+          DEX_MYSQL_ENT_DATABASE: dex
+          DEX_MYSQL_ENT_USER: root
+          DEX_MYSQL_ENT_PASSWORD: root
+          DEX_MYSQL_ENT_HOST: 127.0.0.1
+          DEX_MYSQL_ENT_PORT: ${{ job.services.mysql-ent.ports[3306] }}
+
+          DEX_POSTGRES_DATABASE: postgres 
+          DEX_POSTGRES_USER: postgres
+          DEX_POSTGRES_PASSWORD: postgres
+          DEX_POSTGRES_HOST: localhost
+          DEX_POSTGRES_PORT: ${{ job.services.postgres.ports[5432] }}
+
+          DEX_POSTGRES_ENT_DATABASE: postgres
+          DEX_POSTGRES_ENT_USER: postgres
+          DEX_POSTGRES_ENT_PASSWORD: postgres
+          DEX_POSTGRES_ENT_HOST: localhost
+          DEX_POSTGRES_ENT_PORT: ${{ job.services.postgres-ent.ports[5432] }}
+
+          DEX_ETCD_ENDPOINTS: http://localhost:${{ job.services.etcd.ports[2379] }}
+
+          DEX_LDAP_HOST: localhost
+          DEX_LDAP_PORT: 3890
+          DEX_LDAP_TLS_PORT: 6360
+
+          DEX_KEYSTONE_URL: http://localhost:${{ job.services.keystone.ports[5000] }}
+          DEX_KEYSTONE_ADMIN_URL: http://localhost:${{ job.services.keystone.ports[35357] }}
+          DEX_KEYSTONE_ADMIN_USER: demo
+          DEX_KEYSTONE_ADMIN_PASS: DEMO_PASS
+
+          DEX_KUBERNETES_CONFIG_PATH: ~/.kube/config
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: "1.24"
+
+      - name: Download golangci-lint
+        run: make bin/golangci-lint
+
+      - name: Lint
+        run: make lint
+
+  artifacts:
+    name: Artifacts
+  container-images:
+    name: Container Images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant:
+          - alpine
+          - distroless
+        platform:
+          - linux/amd64
+          - linux/arm64
+
+    permissions:
+      attestations: write
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+
+    outputs:
+      name: ${{ steps.image-name.outputs.value }}
+      digest: ${{ steps.build.outputs.digest }}
+      ref: ${{ steps.image-ref.outputs.value }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to AWS Public ECR
+        id: login-ecr
+        run: |
+          aws ecr-public get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin public.ecr.aws
+
+      - name: Set Image Name
+        id: image-name
+        run: echo "value=public.ecr.aws/u6x9w5c9/my-repo" >> "$GITHUB_OUTPUT"
+      # run: echo "value=${{ secrets.ECR_REPO }}" >> "$GITHUB_OUTPUT"
+
+      - name: Format Platform Name
+        id: platform-name
+        run: echo "PLATFORM_TAG=${{ matrix.platform }}" | sed 's/\//-/g' >> $GITHUB_ENV
+
+      - name: Extract Short SHA for Unique Tagging
+        id: short-sha
+        run: echo "SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+
+      - name: Build Image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          tags: |
+            ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-${{ env.SHORT_SHA }}
+            ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-latest
+          build-args: |
+            BASE_IMAGE=${{ matrix.variant }}
+          outputs: ${{ steps.build-output.outputs.value }}
+          provenance: false  # Prevents unnecessary provenance attestations
+
+      - name: Set Image Reference
+        id: image-ref
+        run: echo "value=${{ steps.image-name.outputs.value }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+      ## Commented out Cosign steps
+      # - name: Install cosign
+      #   uses: sigstore/cosign-installer@v3.8.1
+
+      # - name: Sign the images with GitHub OIDC Token
+      #   run: |
+      #     cosign sign --yes --upload=false --output-file=signature.sig ${{ steps.image-name.outputs.value }}@${{ steps.build.outputs.digest }}
+      #   if: inputs.publish
+
+      # - name: Upload Cosign Signature as Artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: "Cosign-Signature-${{ matrix.variant }}-${{ env.PLATFORM_TAG }}"
+      #     path: signature.sig
+      #   if: inputs.publish
+
+      ##  Trivy Security Scan Steps
+      - name: Get date
+        id: date
+        run: echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Restore Trivy cache
+        uses: actions/cache@v4
+        with:
+          path: cache/db
+          key: trivy-cache-${{ steps.date.outputs.date }}
+          restore-keys: trivy-cache-
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          input: image
+          format: sarif
+          output: trivy-results.sarif
+          scan-type: "fs"
+          scan-ref: "."
+          cache-dir: "./cache"
+
+      - name: Change permissions for Trivy DB
+        run: sudo chmod 0644 ./cache/db/trivy.db
+
+      - name: Upload Trivy scan results as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Trivy-scan-results-${{ matrix.variant }}-${{ env.PLATFORM_TAG }}"
+          path: trivy-results.sarif
+          retention-days: 5
+          overwrite: true
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+
+    
