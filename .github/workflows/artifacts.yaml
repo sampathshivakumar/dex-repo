@@ -3,6 +3,10 @@ name: Artifacts
 on:
   workflow_call:
     inputs:
+      branch:
+        description: "Branch to build image from"
+        required: false
+        type: string
       publish:
         description: Publish artifacts to the artifact store
         default: false
@@ -55,6 +59,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || 'master' }}  # Use the branch input, default to 'master' if not provided
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
