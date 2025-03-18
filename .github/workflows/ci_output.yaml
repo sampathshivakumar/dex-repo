@@ -100,7 +100,7 @@ jobs:
           DEX_MYSQL_ENT_HOST: 127.0.0.1
           DEX_MYSQL_ENT_PORT: ${{ job.services.mysql-ent.ports[3306] }}
 
-          DEX_POSTGRES_DATABASE: postgres 
+          DEX_POSTGRES_DATABASE: postgres
           DEX_POSTGRES_USER: postgres
           DEX_POSTGRES_PASSWORD: postgres
           DEX_POSTGRES_HOST: localhost
@@ -146,146 +146,16 @@ jobs:
 
   artifacts:
     name: Artifacts
-    runs-on: ubuntu-latest
-    outputs:
-      container-image-name:
-        description: Container image name
-        value: ${{ jobs.container-images.outputs.name }}
-      container-image-digest:
-        description: Container image digest
-        value: ${{ jobs.container-images.outputs.digest }}
-      container-image-ref:
-        description: Container image ref
-        value: ${{ jobs.container-images.outputs.ref }}
-  container-images:
-    name: Container Images
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        variant:
-          - alpine
-          - distroless
-        platform:
-          - linux/amd64
-          - linux/arm64
-
+    uses: ./.github/workflows/artifacts.yaml
+    with:
+      publish: true 
+   
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
     permissions:
       attestations: write
       contents: read
       packages: write
       id-token: write
       security-events: write
-
-    outputs:
-      name: ${{ steps.image-name.outputs.value }}
-      digest: ${{ steps.build.outputs.digest }}
-      ref: ${{ steps.image-ref.outputs.value }}
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login to AWS Public ECR
-        id: login-ecr
-        run: |
-          aws ecr-public get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin public.ecr.aws
-
-      - name: Set Image Name
-        id: image-name
-        run: echo "value=public.ecr.aws/u6x9w5c9/my-repo" >> "$GITHUB_OUTPUT"
-      # run: echo "value=${{ secrets.ECR_REPO }}" >> "$GITHUB_OUTPUT"
-
-      - name: Format Platform Name
-        id: platform-name
-        run: echo "PLATFORM_TAG=${{ matrix.platform }}" | sed 's/\//-/g' >> $GITHUB_ENV
-
-      - name: Extract Short SHA for Unique Tagging
-        id: short-sha
-        run: echo "SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
-
-      - name: Build Image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: ${{ matrix.platform }}
-          tags: |
-            ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-${{ env.SHORT_SHA }}
-            ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-latest
-          build-args: |
-            BASE_IMAGE=${{ matrix.variant }}
-          outputs: ${{ steps.build-output.outputs.value }}
-          provenance: false  # Prevents unnecessary provenance attestations
-
-      - name: Set Image Reference
-        id: image-ref
-        run: echo "value=${{ steps.image-name.outputs.value }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
-
-      ## Commented out Cosign steps
-      # - name: Install cosign
-      #   uses: sigstore/cosign-installer@v3.8.1
-
-      # - name: Sign the images with GitHub OIDC Token
-      #   run: |
-      #     cosign sign --yes --upload=false --output-file=signature.sig ${{ steps.image-name.outputs.value }}@${{ steps.build.outputs.digest }}
-      #   if: inputs.publish
-
-      # - name: Upload Cosign Signature as Artifact
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: "Cosign-Signature-${{ matrix.variant }}-${{ env.PLATFORM_TAG }}"
-      #     path: signature.sig
-      #   if: inputs.publish
-
-      ##  Trivy Security Scan Steps
-      - name: Get date
-        id: date
-        run: echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
-
-      - name: Restore Trivy cache
-        uses: actions/cache@v4
-        with:
-          path: cache/db
-          key: trivy-cache-${{ steps.date.outputs.date }}
-          restore-keys: trivy-cache-
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.29.0
-        with:
-          input: image
-          format: sarif
-          output: trivy-results.sarif
-          scan-type: "fs"
-          scan-ref: "."
-          cache-dir: "./cache"
-
-      - name: Change permissions for Trivy DB
-        run: sudo chmod 0644 ./cache/db/trivy.db
-
-      - name: Upload Trivy scan results as an artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Trivy-scan-results-${{ matrix.variant }}-${{ env.PLATFORM_TAG }}"
-          path: trivy-results.sarif
-          retention-days: 5
-          overwrite: true
-
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-
-
-    
