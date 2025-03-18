@@ -60,7 +60,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch || 'master' }}  # Use the branch input, default to 'master' if not provided
+          ref: ${{ github.event.inputs.branch || 'master' }}  # Ensure input branch is properly referenced
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
