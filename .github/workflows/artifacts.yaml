@@ -90,7 +90,7 @@ jobs:
 
       - name: Extract Short SHA for Unique Tagging
         id: short-sha
-        run: echo "SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - name: Determine build output
         uses: haya14busa/action-cond@v1
