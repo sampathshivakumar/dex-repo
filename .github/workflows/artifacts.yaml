@@ -60,7 +60,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch || 'master' }}  # Ensure input branch is properly referenced
+          ref: ${{ inputs.branch || 'master' }}  # Ensure input branch is properly referenced
+          fetch-depth: 0  # Ensure full history for correct SHA
+
+      - name: Debug: Verify Checked-Out Branch and Commit
+        run: |
+          echo "Checked out branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Latest commit SHA: $(git rev-parse HEAD)"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
