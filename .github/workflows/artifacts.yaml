@@ -12,6 +12,11 @@ on:
         default: false
         required: false
         type: boolean
+      release_name:
+        description: "A overridden tag name for the release"
+        required: false
+        type: string
+
     secrets:
       AWS_ROLE_ARN:
         required: true
@@ -88,9 +93,18 @@ jobs:
         id: platform-name
         run: echo "PLATFORM_TAG=${{ matrix.platform }}" | sed 's/\//-/g' >> $GITHUB_ENV
 
-      - name: Extract Short SHA for Unique Tagging
-        id: short-sha
-        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      # - name: Extract Short SHA for Unique Tagging
+      #   id: short-sha
+      #   run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - name: Determine Image Tag
+        id: image-tag
+        run: |
+          if [[ -n "${{ inputs.release_name }}" ]]; then
+            echo "IMAGE_TAG=${{ inputs.release_name }}" >> $GITHUB_ENV
+          else
+            echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          fi
+
 
       - name: Determine build output
         uses: haya14busa/action-cond@v1
@@ -107,7 +121,8 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           tags: |
-            ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-${{ env.SHORT_SHA }}
+            ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-${{ env.IMAGE_TAG }}
+         #  ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-${{ env.SHORT_SHA }}
          #  ${{ steps.image-name.outputs.value }}:${{ matrix.variant }}-${{ env.PLATFORM_TAG }}-latest
           build-args: |
             BASE_IMAGE=${{ matrix.variant }}
