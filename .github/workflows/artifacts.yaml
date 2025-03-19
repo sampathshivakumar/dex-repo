@@ -96,7 +96,7 @@ jobs:
         uses: haya14busa/action-cond@v1
         id: build-output
         with:
-          cond: ${{ github.event_name == 'push' }}
+          cond: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           if_true: type=image,push=true
           if_false: type=oci,dest=image.tar
     
