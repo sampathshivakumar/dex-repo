@@ -73,7 +73,7 @@ jobs:
           ref: ${{ github.event.inputs.branch }}  # Checkout the selected branch
           fetch-depth: 0  # Ensure full history for correct SHA
 
-      - name: Debug: Verify Checked-Out Branch and Commit
+      - name: Debug Verify Checked-Out Branch and Commit
         run: |
           echo "Checked out branch: $(git rev-parse --abbrev-ref HEAD)"
           echo "Latest commit SHA: $(git rev-parse HEAD)"
